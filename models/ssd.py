@@ -1,5 +1,5 @@
 import torch
-from backbone import EfficientNet
+from models.backbone import EfficientNet
 
 class SSD(torch.nn.Module):
 

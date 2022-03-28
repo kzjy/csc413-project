@@ -1,6 +1,6 @@
 import os
 from torch.utils.data import Dataset
-from torchvision.io import read_image
+import cv2
 import pandas as pd
 import numpy as np
 import json
@@ -8,7 +8,7 @@ import glob
 import torch
 
 class COCOImageDataset(Dataset):
-    def __init__(self, folder, transform=None, target_transform=None):
+    def __init__(self, folder, transform=None):
         # Load labels and imgs
         dir_name = os.path.split(folder)[-1]
         self.folder = os.path.abspath(folder)
@@ -19,7 +19,7 @@ class COCOImageDataset(Dataset):
         self.images = self.img_labels['img_name'].unique().tolist()
 
         self.transform = transform
-        self.target_transform = target_transform
+        # self.target_transform = target_transform
 
     def __len__(self):
         return len(self.images)
@@ -27,12 +27,22 @@ class COCOImageDataset(Dataset):
     def __getitem__(self, idx):
         """
         image is C X H X W Tensor
-        label is N X 4 Tensor where N is number of hands
+        target is dict
+            label: N X 4 Tensor where N is number of hands
         """
         img_name = self.images[idx]
         all_label = self.img_labels.loc[self.img_labels['img_name'] == img_name]
         img_path = os.path.join(self.img_dir, img_name)
-        image = read_image(img_path)
-        label = torch.from_numpy(all_label[['xmin', 'xmax', 'ymin', 'ymax']].to_numpy())
+        image = cv2.imread(img_path, cv2.COLOR_BGR2RGB)
+        bbox = all_label[['xmin','ymin', 'xmax','ymax']].values.tolist()
+        label = all_label[['xmin','ymin', 'xmax','ymax']].values.tolist()
+
+        if self.transform is not None:
+            image, bbox, label = self.transform(image, bbox, label)
         
-        return image, label
+        image = torch.from_numpy(image).permute(2, 0, 1).float()
+        target = {}
+        target['bbox'] = torch.tensor(bbox)
+        
+        # print(image.size(), target['bbox'].size())
+        return image, target
