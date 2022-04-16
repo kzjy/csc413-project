@@ -34,15 +34,23 @@ class COCOImageDataset(Dataset):
         all_label = self.img_labels.loc[self.img_labels['img_name'] == img_name]
         img_path = os.path.join(self.img_dir, img_name)
         image = cv2.imread(img_path, cv2.COLOR_BGR2RGB)
-        bbox = all_label[['xmin','ymin', 'xmax','ymax']].values.tolist()
-        label = all_label[['xmin','ymin', 'xmax','ymax']].values.tolist()
+        bbox = all_label[['xmin','ymin', 'xmax','ymax']].to_numpy()
+        zeros = np.zeros(bbox.shape[0]).reshape((bbox.shape[0], 1))
+        # labels = all_label[['xmin','ymin', 'xmax','ymax']].values.tolist()
+
+
+        bbox = np.hstack((bbox, zeros))
+
+        data = {'img': image, 'annot': bbox}
 
         if self.transform is not None:
-            image, bbox, label = self.transform(image, bbox, label)
+            data = self.transform(data)
         
-        image = torch.from_numpy(image).permute(2, 0, 1).float()
-        target = {}
-        target['bbox'] = torch.tensor(bbox)
+        # image = torch.from_numpy(image).permute(2, 0, 1).float()
+        # target = {}
+        # target['bbox'] = torch.tensor(bbox)
+        # target['class'] = torch.tensor([0])
         
         # print(image.size(), target['bbox'].size())
-        return image, target
+        # print(data)
+        return data

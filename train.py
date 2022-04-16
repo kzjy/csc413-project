@@ -3,10 +3,10 @@ import torch.optim as optim
 import argparse
 from tqdm import tqdm
 from dataset.coco_dataset import COCOImageDataset
-from models.ssd import SSD
-from models.efficientdet import EfficientDet
+import torchvision.transforms as transforms
 import utils.utils as utils
-from data.transforms import *
+from dataset.augmentation import *
+from detectors.create_models import create_efficientdet_model, create_ssd_model
 
 torch.manual_seed(0)
 
@@ -38,14 +38,14 @@ def train_epoch(model, criterion, dataloader, optimizer, device) -> float:
     loss: float
     """
     epoch_loss = 0.0
-    for i, data in tqdm(enumerate(dataloader), total=len(dataloader)):
-        imgs, labels = data
-        imgs =  torch.stack(imgs).to(device)
-        optimizer.zero_grad()
-        
-        outputs = model(imgs)
-        print(outputs.size())
-        loss =  criterion(outputs, labels)
+    for i, (images, annotations) in tqdm(enumerate(dataloader), total=len(dataloader)):
+        images = images.cuda().float()
+        annotations = annotations.cuda()
+        classification_loss, regression_loss = model([images, annotations])
+        # print(outputs.size())
+        classification_loss = classification_loss.mean()
+        regression_loss = regression_loss.mean()
+        loss = classification_loss + regression_loss
         loss.backward()
         optimizer.step()
 
@@ -57,7 +57,8 @@ def train_epoch(model, criterion, dataloader, optimizer, device) -> float:
 def main(args):
     
     # Dataset stuff
-    dataset = COCOImageDataset(args.data, transform=train_transform)
+    dataset = COCOImageDataset(args.data, transform=transforms.Compose(
+            [Normalizer(), Augmenter(), Resizer()]))
     train_size = int(len(dataset) * float(args.train_proportion))
     validation_size = len(dataset) - train_size
     train_dataset, validation_dataset = torch.utils.data.random_split(dataset, [train_size, validation_size])
@@ -67,20 +68,20 @@ def main(args):
                                                     batch_size=int(args.batch_size),
                                                     shuffle=True, 
                                                     num_workers=int(args.num_workers),
-                                                    collate_fn=utils.collate_fn)
+                                                    collate_fn=collater)
     validation_dataloader = torch.utils.data.DataLoader(validation_dataset, 
                                                     batch_size=int(args.batch_size),
                                                     shuffle=True, 
                                                     num_workers=int(args.num_workers),
-                                                    collate_fn=utils.collate_fn)
+                                                    collate_fn=collater)
 
 
     # Model stuff
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     if args.model == "efficientdet":
-        model = EfficientDet()
+        model = create_efficientdet_model()
     else:
-        model = SSD()
+        model = create_ssd_model()
     model.to(device)
 
     # Loss and optimizer stuff
