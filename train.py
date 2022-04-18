@@ -7,23 +7,29 @@ import torchvision.transforms as transforms
 import utils.utils as utils
 from dataset.augmentation import *
 from detectors.create_models import create_efficientdet_model, create_ssd_model
+import time
+import os
 
 torch.manual_seed(0)
+iteration = 1
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", choices=['ssd', 'efficientdet'], default="efficientdet", help="Detection model")
-    parser.add_argument("--lr", default=0.01, help="Learning rate")
+    parser.add_argument("--lr", default=0.0001, help="Learning rate")
     parser.add_argument("--num_epoch", default=100, help="Number of Epochs")
     parser.add_argument("--momentum", default=0.8, help="Learning momentum")
     parser.add_argument("--data", default="data/COCO-Hand/COCO-Hand-S", help="Location of dataset")
     parser.add_argument("--train_proportion", default=0.7, help="Proportion of data used for training")
     parser.add_argument("--batch_size", default=32, help="Batch size used for training")
     parser.add_argument("--num_workers", default=2, help="Number of workers for dataloading")
+    parser.add_argument("--checkpoint_path", default="models/efficientdet/model.pth", help="path to checkpoint")
+    parser.add_argument("--save_dir", default="models/efficientdet/")
     args = parser.parse_args()
     return args
 
-def train_epoch(model, criterion, dataloader, optimizer, device) -> float:
+def train_epoch(train_loader, model, scheduler, optimizer, epoch, args):
     """ 
     Train for 1 epoch on the dataset
 
@@ -37,21 +43,42 @@ def train_epoch(model, criterion, dataloader, optimizer, device) -> float:
     returns:
     loss: float
     """
-    epoch_loss = 0.0
-    for i, (images, annotations) in tqdm(enumerate(dataloader), total=len(dataloader)):
+    global iteration
+    print("{} epoch: \t start training....".format(epoch))
+    start = time.time()
+    total_loss = []
+    model.train()
+    optimizer.zero_grad()
+    for idx, (images, annotations) in tqdm(enumerate(train_loader), total=len(train_loader)):
         images = images.cuda().float()
         annotations = annotations.cuda()
         classification_loss, regression_loss = model([images, annotations])
-        # print(outputs.size())
         classification_loss = classification_loss.mean()
         regression_loss = regression_loss.mean()
-        loss = classification_loss + regression_loss
+        loss = regression_loss
         loss.backward()
-        optimizer.step()
-
-        epoch_loss += loss.item()
-    
-    return epoch_loss
+      
+        total_loss.append(loss.item())
+        if(iteration % 300 == 0):
+            print('{} iteration: training ...'.format(iteration))
+            ans = {
+                'epoch': epoch,
+                'iteration': iteration,
+                'cls_loss': classification_loss.item(),
+                'reg_loss': regression_loss.item(),
+                'mean_loss': np.mean(total_loss)
+            }
+            for key, value in ans.items():
+                print('    {:15s}: {}'.format(str(key), value))
+        iteration += 1
+    scheduler.step(np.mean(total_loss))
+    result = {
+        'time': time.time() - start,
+        'loss': np.mean(total_loss)
+    }
+    for key, value in result.items():
+        print('    {:15s}: {}'.format(str(key), value))
+    return result
     
 
 def main(args):
@@ -82,22 +109,27 @@ def main(args):
         model = create_efficientdet_model()
     else:
         model = create_ssd_model()
+    
+    if args.checkpoint_path is not None:
+        model.load_state_dict(torch.load(args.checkpoint_path, map_location="cpu"))
+    model = model.to(device)
     model.to(device)
 
     # Loss and optimizer stuff
     criterion = torch.nn.CrossEntropyLoss()
-    optimizer = optim.SGD(model.parameters(), lr=float(args.lr), momentum=float(args.momentum))
-    lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.1)
+    optimizer = optim.AdamW(model.parameters(), lr=args.lr)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, patience=3, verbose=True)
     
     loss = 0.0
     for epoch in range(int(args.num_epoch)):
         # Train for 1 epoch
         model.train()
-        loss += train_epoch(model, criterion, train_dataloader, optimizer, device)
-        lr_scheduler.step()
+        loss = train_epoch(train_dataloader, model, scheduler, optimizer, epoch, args)
 
         # Evaluate
         model.eval()
+        torch.save(model.state_dict(), os.path.join(os.path.abspath(args.save_dir), f"model.pth"))
 
     pass
 
